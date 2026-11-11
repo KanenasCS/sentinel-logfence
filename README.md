@@ -117,6 +117,15 @@ Fencing halved end-to-end ASR on a current frontier model. Azure's content
 filter blocked a further 7 to 12%, but erratically, which is the argument for a
 deterministic layer. Full per-run detail in `results/model-runs.md`.
 
+## Validated live on AMA-collected telemetry
+
+The control was run end to end on real agent-collected telemetry: a Windows VM
+with the Azure Monitor Agent tailing a proxy access log, the AMA DCR fencing at
+ingestion into `ProxyLogsAma_CL`. Across 90 ingested records, 100% arrived
+properly fenced with the forged-bracket breakout contained and structured fields
+untouched. Setup, payloads, and the verification query are in
+`results/live-validation.md`.
+
 ## Deploy to Sentinel
 
 Two deployable ARM templates in `dcr/`:
