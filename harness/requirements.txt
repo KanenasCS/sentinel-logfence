@@ -1,0 +1,6 @@
+# Layer A (deterministic coverage) needs nothing beyond the standard library.
+# Layer B (model susceptibility) needs ONE of these, matching --provider:
+openai>=1.40        # --provider openai  or  --provider azure
+anthropic>=0.39     # --provider anthropic
+# Charting the results (optional, used by results/plot.py):
+matplotlib>=3.8

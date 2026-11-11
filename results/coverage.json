@@ -1,0 +1,19 @@
+{
+  "config": {
+    "n": 200,
+    "malicious_ratio": 0.6,
+    "seed": 1337,
+    "provider": "dryrun"
+  },
+  "deterministic_coverage": {
+    "records_total": 200,
+    "records_malicious": 120,
+    "exposure_raw_pct": 100.0,
+    "exposure_fenced_pct": 0.0,
+    "breakout_attempts": 36,
+    "breakout_neutralised_pct": 100.0,
+    "structured_fields_checked": 600,
+    "structured_integrity_pct": 100.0
+  },
+  "model_susceptibility": null
+}

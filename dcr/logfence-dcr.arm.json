@@ -1,0 +1,113 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "LogFence: a direct-ingestion Data Collection Rule whose transformKql fences attacker-controllable free-text fields at ingestion, plus the custom table it writes to. Deploy, then send logs via the Logs Ingestion API to test the fence end to end."
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": { "description": "Region for the DCR. Should match the DCE region." }
+    },
+    "dcrName": {
+      "type": "string",
+      "defaultValue": "dcr-logfence-test",
+      "metadata": { "description": "Name of the Data Collection Rule to create." }
+    },
+    "workspaceName": {
+      "type": "string",
+      "metadata": { "description": "Name of the Log Analytics workspace that will hold the custom table." }
+    },
+    "workspaceResourceId": {
+      "type": "string",
+      "metadata": { "description": "Full resourceId of that Log Analytics workspace (the DCR destination)." }
+    },
+    "dataCollectionEndpointId": {
+      "type": "string",
+      "metadata": { "description": "Full resourceId of an existing Data Collection Endpoint in the same region. See deploy-notes for a one-line create command if you do not have one." }
+    },
+    "tableName": {
+      "type": "string",
+      "defaultValue": "ProxyLogs_CL",
+      "metadata": { "description": "Custom table name, must end in _CL." }
+    }
+  },
+  "variables": {
+    "streamName": "Custom-ProxyLogs",
+    "outputStream": "[format('Custom-{0}', parameters('tableName'))]",
+    "transformKql": "source | extend _ua = tostring(user_agent_s) | extend _ua = replace(@'⟦','[',_ua) | extend _ua = replace(@'⟧',']',_ua) | extend _ua = replace(@'[\\r\\n\\t]+',' ',_ua) | extend user_agent_s = strcat('⟦U⟧',_ua,'⟦/U⟧') | extend _url = tostring(url_s) | extend _url = replace(@'⟦','[',_url) | extend _url = replace(@'⟧',']',_url) | extend _url = replace(@'[\\r\\n\\t]+',' ',_url) | extend url_s = strcat('⟦U⟧',_url,'⟦/U⟧') | extend _msg = tostring(message_s) | extend _msg = replace(@'⟦','[',_msg) | extend _msg = replace(@'⟧',']',_msg) | extend _msg = replace(@'[\\r\\n\\t]+',' ',_msg) | extend message_s = strcat('⟦U⟧',_msg,'⟦/U⟧') | project-away _ua, _url, _msg"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/tables",
+      "apiVersion": "2022-10-01",
+      "name": "[format('{0}/{1}', parameters('workspaceName'), parameters('tableName'))]",
+      "properties": {
+        "schema": {
+          "name": "[parameters('tableName')]",
+          "columns": [
+            { "name": "TimeGenerated", "type": "dateTime" },
+            { "name": "src_ip_s", "type": "string" },
+            { "name": "dst_port_d", "type": "int" },
+            { "name": "user_agent_s", "type": "string" },
+            { "name": "url_s", "type": "string" },
+            { "name": "message_s", "type": "string" }
+          ]
+        },
+        "retentionInDays": 30,
+        "totalRetentionInDays": 30
+      }
+    },
+    {
+      "type": "Microsoft.Insights/dataCollectionRules",
+      "apiVersion": "2023-03-11",
+      "name": "[parameters('dcrName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces/tables', parameters('workspaceName'), parameters('tableName'))]"
+      ],
+      "properties": {
+        "dataCollectionEndpointId": "[parameters('dataCollectionEndpointId')]",
+        "streamDeclarations": {
+          "Custom-ProxyLogs": {
+            "columns": [
+              { "name": "TimeGenerated", "type": "datetime" },
+              { "name": "src_ip_s", "type": "string" },
+              { "name": "dst_port_d", "type": "int" },
+              { "name": "user_agent_s", "type": "string" },
+              { "name": "url_s", "type": "string" },
+              { "name": "message_s", "type": "string" }
+            ]
+          }
+        },
+        "destinations": {
+          "logAnalytics": [
+            {
+              "workspaceResourceId": "[parameters('workspaceResourceId')]",
+              "name": "laDest"
+            }
+          ]
+        },
+        "dataFlows": [
+          {
+            "streams": [ "Custom-ProxyLogs" ],
+            "destinations": [ "laDest" ],
+            "transformKql": "[variables('transformKql')]",
+            "outputStream": "[variables('outputStream')]"
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": {
+    "dcrImmutableId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Insights/dataCollectionRules', parameters('dcrName'))).immutableId]"
+    },
+    "streamName": {
+      "type": "string",
+      "value": "[variables('streamName')]"
+    }
+  }
+}

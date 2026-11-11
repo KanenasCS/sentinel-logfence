@@ -1,0 +1,60 @@
+// =====================================================================
+// LogFence  -  ingestion-time prompt-injection containment for Sentinel
+// File: dcr/transform-fencing.kql
+// Where it runs: the transformKql property of a Data Collection Rule (DCR),
+//                applied to every incoming record BEFORE it lands in the
+//                destination table. Deterministic, platform-side, 100% of rows.
+//
+// What it does: it does NOT try to detect "an attack". It treats the fields
+// an attacker can write as untrusted data and makes that explicit in the bytes
+// that any downstream AI (Security Copilot, a custom MCP-fed agent, an
+// LLM summariser) will later read, so the agent can be told once, in its
+// system prompt, that anything between the fence markers is data and never
+// instructions.
+//
+// Three deterministic steps per attacker-controllable free-text field:
+//   1. Forgery prevention - neutralise the two fence bracket characters
+//      (U+27E6, U+27E7) wherever they appear in the incoming value, so an
+//      attacker cannot inject a closing marker and "break out" of the fence.
+//   2. Structure collapse  - fold CR / LF / TAB into single spaces, removing the
+//      trick of faking new log lines or new conversation turns.
+//   3. Fence                - wrap the cleaned value in the markers (strcat).
+//
+// Fence tokens use characters that effectively never occur in telemetry
+// (U+27E6 LEFT WHITE SQUARE BRACKET, U+27E7 RIGHT WHITE SQUARE BRACKET).
+//
+// Function note: transformKql blocks replace_string and replace_regex. The
+// supported replacement function is replace(regex, rewrite, source), used below.
+// Columns are referenced directly because the DCR streamDeclaration guarantees
+// they exist (column_ifexists is not supported in transformKql either).
+//
+// IMPORTANT (honesty note, keep it): fencing is a STRUCTURAL control. Published
+// evaluations show it reduces, it does not eliminate, model susceptibility to
+// persuasive text that sits inside the fence. Pair it with least-privilege on
+// agent tools and output validation. This transform is the deterministic,
+// every-row layer the research describes but nobody had written for Sentinel.
+// =====================================================================
+
+source
+// ---- user_agent_s (attacker-controllable free text) ----
+| extend _ua = tostring(user_agent_s)
+| extend _ua = replace(@"⟦", "[", _ua)
+| extend _ua = replace(@"⟧", "]", _ua)
+| extend _ua = replace(@"[\r\n\t]+", " ", _ua)
+| extend user_agent_s = strcat("⟦U⟧", _ua, "⟦/U⟧")
+// ---- url_s (attacker-controllable free text) ----
+| extend _url = tostring(url_s)
+| extend _url = replace(@"⟦", "[", _url)
+| extend _url = replace(@"⟧", "]", _url)
+| extend _url = replace(@"[\r\n\t]+", " ", _url)
+| extend url_s = strcat("⟦U⟧", _url, "⟦/U⟧")
+// ---- message_s (raw message / payload, attacker-controllable free text) ----
+| extend _msg = tostring(message_s)
+| extend _msg = replace(@"⟦", "[", _msg)
+| extend _msg = replace(@"⟧", "]", _msg)
+| extend _msg = replace(@"[\r\n\t]+", " ", _msg)
+| extend message_s = strcat("⟦U⟧", _msg, "⟦/U⟧")
+// ---- structured fields (TimeGenerated, src_ip_s, dst_port_d, ...) are left
+//      untouched on purpose: they drive analytics, parsers and joins, and an
+//      attacker does not control them. Fence only what the attacker writes.
+| project-away _ua, _url, _msg

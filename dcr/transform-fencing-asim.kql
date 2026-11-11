@@ -1,0 +1,50 @@
+// =====================================================================
+// LogFence  -  ASIM-aware variant
+// File: dcr/transform-fencing-asim.kql
+// Where it runs: transformKql of a DCR whose destination is an ASIM-normalised
+//                table (example here: the Web Session schema). Same three-step
+//                control as the core transform, but scoped by schema.
+//
+// The ASIM point: a normalised schema already tells you which columns are
+// structured (addresses, ports, results, counts, timestamps - attacker does
+// NOT control these) and which are free text the attacker writes (Url,
+// UrlOriginal, HttpUserAgent, HttpReferrer). Fence the free-text columns and
+// leave the structured columns byte-for-byte intact, so every downstream
+// parser, analytics rule, workbook and join keeps working while the AI-facing
+// free text is contained.
+//
+// Function note: transformKql blocks replace_string and replace_regex. The
+// supported replacement function is replace(regex, rewrite, source). Columns are
+// referenced directly (column_ifexists is not supported either); the DCR
+// streamDeclaration guarantees they exist.
+// =====================================================================
+
+source
+// ---- Url (free text) ----
+| extend _u = tostring(Url)
+| extend _u = replace(@"⟦", "[", _u)
+| extend _u = replace(@"⟧", "]", _u)
+| extend _u = replace(@"[\r\n\t]+", " ", _u)
+| extend Url = strcat("⟦U⟧", _u, "⟦/U⟧")
+// ---- UrlOriginal (free text) ----
+| extend _uo = tostring(UrlOriginal)
+| extend _uo = replace(@"⟦", "[", _uo)
+| extend _uo = replace(@"⟧", "]", _uo)
+| extend _uo = replace(@"[\r\n\t]+", " ", _uo)
+| extend UrlOriginal = strcat("⟦U⟧", _uo, "⟦/U⟧")
+// ---- HttpUserAgent (free text) ----
+| extend _ua = tostring(HttpUserAgent)
+| extend _ua = replace(@"⟦", "[", _ua)
+| extend _ua = replace(@"⟧", "]", _ua)
+| extend _ua = replace(@"[\r\n\t]+", " ", _ua)
+| extend HttpUserAgent = strcat("⟦U⟧", _ua, "⟦/U⟧")
+// ---- HttpReferrer (free text) ----
+| extend _hr = tostring(HttpReferrer)
+| extend _hr = replace(@"⟦", "[", _hr)
+| extend _hr = replace(@"⟧", "]", _hr)
+| extend _hr = replace(@"[\r\n\t]+", " ", _hr)
+| extend HttpReferrer = strcat("⟦U⟧", _hr, "⟦/U⟧")
+// ---- Structured ASIM columns kept intact:
+//      SrcIpAddr, DstIpAddr, SrcPortNumber, DstPortNumber, EventResult,
+//      EventCount, EventStartTime, EventEndTime, EventType, NetworkProtocol ...
+| project-away _u, _uo, _ua, _hr

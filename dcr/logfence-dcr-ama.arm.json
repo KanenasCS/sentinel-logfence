@@ -1,0 +1,137 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "LogFence (AMA path): a custom-text-log DCR collected by the Azure Monitor Agent from a web/proxy access log on a VM. Each line is parsed into fields and the attacker-controllable free-text fields (url, user_agent, message) are fenced at ingestion. Includes the custom table and the VM association."
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    },
+    "dcrName": {
+      "type": "string",
+      "defaultValue": "dcr-logfence-ama"
+    },
+    "workspaceName": {
+      "type": "string",
+      "metadata": { "description": "Log Analytics workspace name that holds the custom table." }
+    },
+    "workspaceResourceId": {
+      "type": "string",
+      "metadata": { "description": "Full resourceId of that workspace (the DCR destination)." }
+    },
+    "dataCollectionEndpointId": {
+      "type": "string",
+      "metadata": { "description": "Full resourceId of a Data Collection Endpoint in the same region. Required for AMA custom text logs." }
+    },
+    "vmResourceId": {
+      "type": "string",
+      "metadata": { "description": "Full resourceId of the Linux VM running AMA that this DCR is associated with." }
+    },
+    "tableName": {
+      "type": "string",
+      "defaultValue": "ProxyLogsAma_CL"
+    },
+    "filePattern": {
+      "type": "string",
+      "defaultValue": "/var/log/logfence/access.log",
+      "metadata": { "description": "Path (glob allowed) of the access log AMA tails on the VM." }
+    }
+  },
+  "variables": {
+    "streamName": "Custom-ProxyLogsAma",
+    "outputStream": "[format('Custom-{0}', parameters('tableName'))]",
+    "transformKql": "source | extend _p = split(RawData,'|') | extend src_ip_s = tostring(_p[0]) | extend dst_port_s = tostring(_p[1]) | extend url_s = tostring(_p[2]) | extend user_agent_s = tostring(_p[3]) | extend message_s = tostring(_p[4]) | extend _ua = replace(@'⟦','[',user_agent_s) | extend _ua = replace(@'⟧',']',_ua) | extend _ua = replace(@'[\\r\\n\\t]+',' ',_ua) | extend user_agent_s = strcat('⟦U⟧',_ua,'⟦/U⟧') | extend _url = replace(@'⟦','[',url_s) | extend _url = replace(@'⟧',']',_url) | extend _url = replace(@'[\\r\\n\\t]+',' ',_url) | extend url_s = strcat('⟦U⟧',_url,'⟦/U⟧') | extend _msg = replace(@'⟦','[',message_s) | extend _msg = replace(@'⟧',']',_msg) | extend _msg = replace(@'[\\r\\n\\t]+',' ',_msg) | extend message_s = strcat('⟦U⟧',_msg,'⟦/U⟧') | project TimeGenerated, src_ip_s, dst_port_s, url_s, user_agent_s, message_s"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/tables",
+      "apiVersion": "2022-10-01",
+      "name": "[format('{0}/{1}', parameters('workspaceName'), parameters('tableName'))]",
+      "properties": {
+        "schema": {
+          "name": "[parameters('tableName')]",
+          "columns": [
+            { "name": "TimeGenerated", "type": "dateTime" },
+            { "name": "src_ip_s", "type": "string" },
+            { "name": "dst_port_s", "type": "string" },
+            { "name": "url_s", "type": "string" },
+            { "name": "user_agent_s", "type": "string" },
+            { "name": "message_s", "type": "string" }
+          ]
+        },
+        "retentionInDays": 30,
+        "totalRetentionInDays": 30
+      }
+    },
+    {
+      "type": "Microsoft.Insights/dataCollectionRules",
+      "apiVersion": "2023-03-11",
+      "name": "[parameters('dcrName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces/tables', parameters('workspaceName'), parameters('tableName'))]"
+      ],
+      "properties": {
+        "dataCollectionEndpointId": "[parameters('dataCollectionEndpointId')]",
+        "streamDeclarations": {
+          "Custom-ProxyLogsAma": {
+            "columns": [
+              { "name": "TimeGenerated", "type": "datetime" },
+              { "name": "RawData", "type": "string" }
+            ]
+          }
+        },
+        "dataSources": {
+          "logFiles": [
+            {
+              "name": "proxyAccessLog",
+              "streams": [ "Custom-ProxyLogsAma" ],
+              "filePatterns": [ "[parameters('filePattern')]" ],
+              "format": "text",
+              "settings": {
+                "text": { "recordStartTimestampFormat": "ISO 8601" }
+              }
+            }
+          ]
+        },
+        "destinations": {
+          "logAnalytics": [
+            {
+              "workspaceResourceId": "[parameters('workspaceResourceId')]",
+              "name": "laDest"
+            }
+          ]
+        },
+        "dataFlows": [
+          {
+            "streams": [ "Custom-ProxyLogsAma" ],
+            "destinations": [ "laDest" ],
+            "transformKql": "[variables('transformKql')]",
+            "outputStream": "[variables('outputStream')]"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Insights/dataCollectionRuleAssociations",
+      "apiVersion": "2022-06-01",
+      "name": "logfence-ama-assoc",
+      "scope": "[parameters('vmResourceId')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/dataCollectionRules', parameters('dcrName'))]"
+      ],
+      "properties": {
+        "dataCollectionRuleId": "[resourceId('Microsoft.Insights/dataCollectionRules', parameters('dcrName'))]"
+      }
+    }
+  ],
+  "outputs": {
+    "dcrImmutableId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Insights/dataCollectionRules', parameters('dcrName'))).immutableId]"
+    },
+    "tableName": { "type": "string", "value": "[parameters('tableName')]" }
+  }
+}
